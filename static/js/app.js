@@ -32,6 +32,9 @@ let currentOrdersPage = 1; // 当前页码
 let ordersPerPage = 20; // 每页显示数量
 let totalOrdersPages = 0; // 总页数
 let currentOrderSearchKeyword = ''; // 当前搜索关键词
+let loadingRequestCount = 0;
+let loadingShowTimer = null;
+const LOADING_SHOW_DELAY = 120;
 
 // ================================
 // 通用功能 - 菜单切换和导航
@@ -39,32 +42,36 @@ let currentOrderSearchKeyword = ''; // 当前搜索关键词
 function showSection(sectionName) {
     console.log('切换到页面:', sectionName); // 调试信息
 
-    // 隐藏所有内容区域
-    document.querySelectorAll('.content-section').forEach(section => {
-    section.classList.remove('active');
-    });
-
-    // 移除所有菜单项的active状态
-    document.querySelectorAll('.nav-link').forEach(link => {
-    link.classList.remove('active');
-    });
-
-    // 显示选中的内容区域
+    // 获取并校验目标内容区域
     const targetSection = document.getElementById(sectionName + '-section');
-    if (targetSection) {
+    if (!targetSection) {
+        console.error('找不到页面元素:', sectionName + '-section'); // 调试信息
+        return;
+    }
+
+    // 如果已经是当前页面，避免重复切换导致闪烁
+    if (targetSection.classList.contains('active')) {
+        return;
+    }
+
+    // 仅切换当前激活页面和目标页面，避免“先全关再全开”造成白闪
+    const currentActiveSection = document.querySelector('.content-section.active');
+    if (currentActiveSection) {
+        currentActiveSection.classList.remove('active');
+    }
+
     targetSection.classList.add('active');
     console.log('页面已激活:', sectionName + '-section'); // 调试信息
-    } else {
-    console.error('找不到页面元素:', sectionName + '-section'); // 调试信息
-    }
 
-    // 设置对应菜单项为active（修复event.target问题）
-    const menuLinks = document.querySelectorAll('.nav-link');
-    menuLinks.forEach(link => {
-    if (link.onclick && link.onclick.toString().includes(`showSection('${sectionName}')`)) {
-        link.classList.add('active');
-    }
+    // 仅处理侧边栏菜单 active，避免影响内容区域 tab 的 .nav-link
+    document.querySelectorAll('#sidebar .sidebar-nav .nav-link').forEach(link => {
+        link.classList.remove('active');
     });
+
+    const activeMenuLink = document.querySelector(`#sidebar .nav-item[data-menu-id="${sectionName}"] .nav-link`);
+    if (activeMenuLink) {
+        activeMenuLink.classList.add('active');
+    }
 
     // 根据不同section加载对应数据
     switch(sectionName) {
@@ -1534,7 +1541,38 @@ async function deleteSpecificItem(groupId, itemIndex) {
 
 // 显示/隐藏加载动画
 function toggleLoading(show) {
-    document.getElementById('loading').classList.toggle('d-none', !show);
+    const loadingEl = document.getElementById('loading');
+    if (!loadingEl) return;
+
+    if (show) {
+        loadingRequestCount += 1;
+
+        if (loadingRequestCount === 1) {
+            if (loadingShowTimer) {
+                clearTimeout(loadingShowTimer);
+            }
+
+            loadingShowTimer = setTimeout(() => {
+                if (loadingRequestCount > 0) {
+                    loadingEl.classList.remove('d-none');
+                }
+                loadingShowTimer = null;
+            }, LOADING_SHOW_DELAY);
+        }
+        return;
+    }
+
+    if (loadingRequestCount > 0) {
+        loadingRequestCount -= 1;
+    }
+
+    if (loadingRequestCount === 0) {
+        if (loadingShowTimer) {
+            clearTimeout(loadingShowTimer);
+            loadingShowTimer = null;
+        }
+        loadingEl.classList.add('d-none');
+    }
 }
 
 // ================================
@@ -13694,7 +13732,7 @@ function exportSearchResults() {
 
 
 // 默认版本号（当无法读取 version.txt 时使用）
-const DEFAULT_VERSION = 'v1.2.6';
+const DEFAULT_VERSION = 'v1.2.8';
 
 // 当前本地版本号（动态从 version.txt 读取）
 let LOCAL_VERSION = DEFAULT_VERSION;
@@ -13707,9 +13745,19 @@ let remoteVersionInfo = null;
 
 // 本地版本历史（远程服务禁用时使用）
 const LOCAL_VERSION_HISTORY = {
-    version: 'v1.2.7',
+    version: 'v1.2.8',
     intro: '本系统仅供个人学习研究使用，请勿用于商业用途。如有问题或建议，欢迎反馈。',
     versionHistory: [
+        {
+            version: 'v1.2.8',
+            date: '2026-02-26',
+            updates: [
+                '【修复】优化侧边栏切换逻辑，避免切换菜单时主内容区出现白屏闪烁',
+                '【修复】优化全局loading遮罩显示策略（延迟展示+并发计数），降低仪表盘和账号管理切换时的闪白感',
+                '【优化】暗色模式可读性增强：提升账号管理扫码按钮提示文案与仪表盘总账号图标的对比度',
+                '【修复】恢复loading出现时的鼠标悬停焦点表现，避免交互反馈丢失'
+            ]
+        },
         {
             version: 'v1.2.7',
             date: '2026-02-21',
@@ -15499,4 +15547,3 @@ function loadOnlineIm() {
         iframe.src = realSrc;
     }
 }
-
