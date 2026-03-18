@@ -1127,6 +1127,54 @@ class XianyuLive:
         )
         return {"match_type": match_type, "order": order}
 
+    async def _refresh_sid_lookup_if_needed(self, sid: str, sid_lookup: Dict[str, Any], *,
+                                            item_id: str = None, buyer_id: str = None,
+                                            minutes: int = 10, log_prefix: str = "") -> Dict[str, Any]:
+        """sid 命中未就绪订单时，强刷详情后再判定一次。"""
+        recent_order = (sid_lookup or {}).get('order')
+        match_type = (sid_lookup or {}).get('match_type', 'missing')
+
+        if not recent_order or match_type not in {'not_ready', 'other_status'}:
+            return sid_lookup
+
+        order_id = str(recent_order.get('order_id') or '').strip()
+        if not order_id:
+            return sid_lookup
+
+        refresh_item_id = recent_order.get('item_id') or item_id
+        refresh_buyer_id = recent_order.get('buyer_id') or buyer_id
+        old_status = recent_order.get('order_status') or 'unknown'
+
+        logger.info(
+            f"{log_prefix} sid命中的订单状态未就绪，尝试强制刷新订单详情后重试: "
+            f"order_id={order_id}, status={old_status}"
+        )
+
+        try:
+            await self.fetch_order_detail_info(
+                order_id,
+                refresh_item_id,
+                refresh_buyer_id,
+                sid=sid,
+                force_refresh=True
+            )
+        except Exception as refresh_error:
+            logger.warning(f"{log_prefix} sid未就绪订单强刷失败: {self._safe_str(refresh_error)}")
+            return sid_lookup
+
+        refreshed_lookup = self._lookup_delivery_order_by_sid(
+            sid,
+            minutes=minutes,
+            log_prefix=log_prefix
+        )
+        refreshed_order = refreshed_lookup.get('order') or {}
+        logger.info(
+            f"{log_prefix} sid强刷后重新判定: order_id={refreshed_order.get('order_id') or order_id}, "
+            f"status={refreshed_order.get('order_status') or 'unknown'}, "
+            f"match_type={refreshed_lookup.get('match_type', 'missing')}"
+        )
+        return refreshed_lookup
+
     async def _ensure_item_owned_by_current_account(self, item_id: str, *,
                                                     log_prefix: str = "",
                                                     page_size: int = 50,
@@ -2878,10 +2926,19 @@ class XianyuLive:
 
                 if fallback_sid:
                     try:
+                        log_prefix = f'[{msg_time}] 【{self.cookie_id}】'
                         sid_lookup = self._lookup_delivery_order_by_sid(
                             fallback_sid,
                             minutes=10,
-                            log_prefix=f'[{msg_time}] 【{self.cookie_id}】'
+                            log_prefix=log_prefix
+                        )
+                        sid_lookup = await self._refresh_sid_lookup_if_needed(
+                            fallback_sid,
+                            sid_lookup,
+                            item_id=item_id,
+                            buyer_id=send_user_id,
+                            minutes=10,
+                            log_prefix=log_prefix
                         )
                     except Exception as sid_query_e:
                         logger.error(f'[{msg_time}] 【{self.cookie_id}】sid兜底查单异常: {self._safe_str(sid_query_e)}')
@@ -6977,6 +7034,7 @@ Cookie数量: {cookie_count}
                     logger.info(f"从数据库获取商品信息: {item_id}")
                     db_item_info = db_manager.get_item_info(self.cookie_id, item_id)
                     if db_item_info:
+                        item_info = db_item_info
                         # 拼接商品标题和详情作为搜索文本
                         item_title_db = db_item_info.get('item_title', '') or ''
                         item_detail_db = db_item_info.get('item_detail', '') or ''
@@ -7123,12 +7181,17 @@ Cookie数量: {cookie_count}
             order_spec_mode = _get_order_spec_mode()
             item_config_mode = 'spec_enabled' if item_config_multi_spec else 'no_spec'
 
-            if order_spec_mode != 'no_spec' and not item_config_multi_spec:
+            if order_spec_mode != 'no_spec' and item_info is not None and not item_config_multi_spec:
                 logger.warning(
-                    f"商品配置为无规格，但订单解析到实际规格，继续按订单规格严格匹配: "
+                    f"商品已配置为无规格，忽略订单解析到的规格并按普通规则匹配: "
                     f"order_spec_mode={order_spec_mode}, item_id={item_id or 'unknown'}, "
-                    f"order_id={order_id or 'unknown'}"
+                    f"order_id={order_id or 'unknown'}, spec={spec_name}:{spec_value}"
                 )
+                spec_name = ''
+                spec_value = ''
+                spec_name_2 = ''
+                spec_value_2 = ''
+                order_spec_mode = _get_order_spec_mode()
             elif order_spec_mode == 'no_spec' and item_config_multi_spec:
                 block_reason = (
                     f"商品已开启规格匹配，但订单未解析到有效规格信息，已阻断自动发货: "
@@ -10633,10 +10696,19 @@ Cookie数量: {cookie_count}
                             
                             logger.info(f'[{msg_time}] 【{self.cookie_id}】[{msg_id}] 🔍 简化消息解析: sid={simple_sid}, session_id={session_id_str}')
                             
+                            log_prefix = f'[{msg_time}] 【{self.cookie_id}】[{msg_id}]'
                             sid_lookup = self._lookup_delivery_order_by_sid(
                                 simple_sid,
                                 minutes=10,
-                                log_prefix=f'[{msg_time}] 【{self.cookie_id}】[{msg_id}]'
+                                log_prefix=log_prefix
+                            )
+                            sid_lookup = await self._refresh_sid_lookup_if_needed(
+                                simple_sid,
+                                sid_lookup,
+                                item_id=item_id,
+                                buyer_id=user_id,
+                                minutes=10,
+                                log_prefix=log_prefix
                             )
                             recent_order = sid_lookup.get('order')
                             sid_match_type = sid_lookup.get('match_type', 'missing')
