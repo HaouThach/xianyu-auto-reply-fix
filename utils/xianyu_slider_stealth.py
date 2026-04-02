@@ -1831,24 +1831,24 @@ class XianyuSliderStealth:
                 # 记录所有cookie的详细信息
                 logger.info(f"【{self.pure_user_id}】获取到的所有cookie: {list(new_cookies.keys())}")
                 
-                # 只提取x5sec相关的cookie
-                filtered_cookies = {}
-                
+                # 单独记录x5相关cookie，便于排查风控链路
+                x5_cookies = {}
+
                 # 筛选出x5相关的cookies（包括x5sec, x5step等）
                 for cookie_name, cookie_value in new_cookies.items():
                     cookie_name_lower = cookie_name.lower()
                     if cookie_name_lower.startswith('x5') or 'x5sec' in cookie_name_lower:
-                        filtered_cookies[cookie_name] = cookie_value
+                        x5_cookies[cookie_name] = cookie_value
                         logger.info(f"【{self.pure_user_id}】x5相关cookie已获取: {cookie_name} = {cookie_value}")
-                
-                logger.info(f"【{self.pure_user_id}】找到{len(filtered_cookies)}个x5相关cookies: {list(filtered_cookies.keys())}")
-                
-                if filtered_cookies:
-                    logger.info(f"【{self.pure_user_id}】返回过滤后的x5相关cookie: {list(filtered_cookies.keys())}")
-                    return filtered_cookies
+
+                logger.info(f"【{self.pure_user_id}】找到{len(x5_cookies)}个x5相关cookies: {list(x5_cookies.keys())}")
+
+                if x5_cookies:
+                    logger.info(f"【{self.pure_user_id}】返回完整cookie集合，并保留x5相关cookie日志: {list(x5_cookies.keys())}")
                 else:
                     logger.warning(f"【{self.pure_user_id}】未找到x5相关cookie")
-                    return None
+
+                return new_cookies
             else:
                 logger.warning(f"【{self.pure_user_id}】未获取到任何cookie")
                 return None

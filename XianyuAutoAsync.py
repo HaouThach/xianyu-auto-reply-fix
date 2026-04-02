@@ -4487,6 +4487,47 @@ class XianyuLive:
         self.last_slider_success_at = time.time()
         self.last_slider_success_cookie_length = len(cookies_str or "")
 
+    def _merge_cookie_dicts(self, incoming_cookies_dict):
+        """合并新获取的 Cookie，返回合并结果和变更摘要。"""
+        current_cookies_dict = trans_cookies(self.cookies_str)
+        merged_cookies_dict = current_cookies_dict.copy()
+        updated_fields = []
+        changed_fields = []
+        new_fields = []
+
+        for key, value in (incoming_cookies_dict or {}).items():
+            if key in merged_cookies_dict:
+                if merged_cookies_dict[key] != value:
+                    merged_cookies_dict[key] = value
+                    updated_fields.append(key)
+                    changed_fields.append(key)
+            else:
+                merged_cookies_dict[key] = value
+                updated_fields.append(f"{key}(新增)")
+                new_fields.append(key)
+
+        return current_cookies_dict, merged_cookies_dict, updated_fields, changed_fields, new_fields
+
+    def _log_cookie_merge_summary(self, merged_cookies_dict, updated_fields, changed_fields, new_fields, context: str):
+        """打印 Cookie 合并结果，重点关注会话关键字段。"""
+        context_prefix = f"{context}：" if context else ""
+        logger.info(f"【{self.cookie_id}】{context_prefix}合并后cookies包含 {len(merged_cookies_dict)} 个字段")
+
+        if updated_fields:
+            logger.info(f"【{self.cookie_id}】{context_prefix}更新的cookie字段: {', '.join(updated_fields)}")
+        else:
+            logger.info(f"【{self.cookie_id}】{context_prefix}没有cookie字段需要更新")
+
+        important_keys = ['unb', '_m_h5_tk', '_m_h5_tk_enc', 'cookie2', 't', 'sgcookie', 'cna', 'x5sec', 'x5secdata']
+        logger.info(f"【{self.cookie_id}】{context_prefix}关键字段检查:")
+        for key in important_keys:
+            if key in merged_cookies_dict:
+                val = merged_cookies_dict[key]
+                marker = " [已变化]" if key in changed_fields else " [新增]" if key in new_fields else ""
+                logger.info(f"【{self.cookie_id}】  ✅ {key}: {'存在' if val else '为空'} (长度: {len(str(val)) if val else 0}){marker}")
+            else:
+                logger.info(f"【{self.cookie_id}】  ❌ {key}: 缺失")
+
     def _has_recent_slider_success(self, window_seconds: int = None) -> bool:
         if not self.last_slider_success_at:
             return False
@@ -4908,6 +4949,7 @@ class XianyuLive:
                                 "令牌/Session过期",
                                 risk_session_id=token_expired_session_id,
                                 trigger_scene=token_trigger_scene,
+                                ignore_slider_failed_backoff=self._has_recent_slider_success(),
                             )
                             
                             if token_expired_log_id:
@@ -5089,10 +5131,12 @@ class XianyuLive:
                 if success and cookies:
                     logger.info(f"【{self.cookie_id}】滑块验证成功，获取到新的cookies")
 
-                    # 只提取x5sec相关的cookie值进行更新
-                    updated_cookies = self.cookies.copy()  # 复制现有cookies
-                    new_cookie_count = 0
-                    updated_cookie_count = 0
+                    current_cookies_dict = trans_cookies(self.cookies_str)
+                    updated_cookies = {}
+                    updated_fields = []
+                    changed_fields = []
+                    new_fields = []
+                    removed_fields = []
                     x5sec_cookies = {}
 
                     # 筛选出x5相关的cookies（包括x5sec, x5step等）
@@ -5103,24 +5147,30 @@ class XianyuLive:
 
                     logger.info(f"【{self.cookie_id}】找到{len(x5sec_cookies)}个x5相关cookies: {list(x5sec_cookies.keys())}")
 
-                    # 只更新x5相关的cookies
-                    for cookie_name, cookie_value in x5sec_cookies.items():
-                        if cookie_name in updated_cookies:
-                            if updated_cookies[cookie_name] != cookie_value:
-                                logger.warning(f"【{self.cookie_id}】更新x5 cookie: {cookie_name}")
-                                updated_cookies[cookie_name] = cookie_value
-                                updated_cookie_count += 1
-                            else:
-                                logger.warning(f"【{self.cookie_id}】x5 cookie值未变: {cookie_name}")
-                        else:
-                            logger.warning(f"【{self.cookie_id}】新增x5 cookie: {cookie_name}")
-                            updated_cookies[cookie_name] = cookie_value
-                            new_cookie_count += 1
+                    updated_cookies = dict(cookies)
+                    for cookie_name, cookie_value in updated_cookies.items():
+                        old_value = current_cookies_dict.get(cookie_name)
+                        if old_value is None:
+                            updated_fields.append(f"{cookie_name}(新增)")
+                            new_fields.append(cookie_name)
+                        elif old_value != cookie_value:
+                            updated_fields.append(cookie_name)
+                            changed_fields.append(cookie_name)
 
-                    # 将合并后的cookies字典转换为字符串格式
+                    removed_fields = [cookie_name for cookie_name in current_cookies_dict.keys() if cookie_name not in updated_cookies]
                     cookies_str = "; ".join([f"{k}={v}" for k, v in updated_cookies.items()])
 
-                    logger.info(f"【{self.cookie_id}】x5 Cookie更新完成: 新增{new_cookie_count}个, 更新{updated_cookie_count}个, 总计{len(updated_cookies)}个")
+                    self._log_cookie_merge_summary(
+                        updated_cookies,
+                        updated_fields,
+                        changed_fields,
+                        new_fields,
+                        context="滑块验证成功后Cookie合并"
+                    )
+                    if removed_fields:
+                        logger.warning(
+                            f"【{self.cookie_id}】滑块验证成功后按浏览器快照移除旧Cookie字段 ({len(removed_fields)}个): {', '.join(removed_fields)}"
+                        )
 
                     # 自动更新数据库中的cookie
                     try:
@@ -5136,12 +5186,13 @@ class XianyuLive:
                         await self.update_config_cookies()
                         logger.info(f"【{self.cookie_id}】滑块验证成功后，数据库cookies已自动更新")
                         self._mark_slider_success_recovery(cookies_str)
+                        XianyuLive.clear_password_login_failure_backoff(self.cookie_id)
+                        logger.info(f"【{self.cookie_id}】滑块验证成功后，已清理密码登录失败退避状态")
 
-                            
-                        # 记录成功更新到日志文件，包含x5相关的cookie信息
+                        # 记录成功更新到日志文件，包含关键字段变化和x5相关cookie信息
                         x5sec_cookies_str = "; ".join([f"{k}={v}" for k, v in x5sec_cookies.items()]) if x5sec_cookies else "无"
                         log_captcha_event(self.cookie_id, "滑块验证成功并自动更新数据库", True,
-                            f"cookies长度: {len(cookies_str)}, 新增{new_cookie_count}个x5, 更新{updated_cookie_count}个x5, 总计{len(updated_cookies)}个cookie项, x5 cookies: {x5sec_cookies_str}")
+                            f"原有{len(current_cookies_dict)}个cookie项, 浏览器快照{len(updated_cookies)}个, 变更字段{len(changed_fields)}个, 新增字段{len(new_fields)}个, 移除字段{len(removed_fields)}个, x5 cookies: {x5sec_cookies_str}")
 
                         # 发送成功通知
                         await self.send_token_refresh_notification(
@@ -5159,13 +5210,15 @@ class XianyuLive:
                         # 记录更新失败到日志文件，包含获取到的x5 cookies
                         x5sec_cookies_str = "; ".join([f"{k}={v}" for k, v in x5sec_cookies.items()]) if x5sec_cookies else "无"
                         log_captcha_event(self.cookie_id, "滑块验证成功但数据库更新失败", False,
-                            f"更新异常: {self._safe_str(update_e)[:100]}, 获取到的x5 cookies: {x5sec_cookies_str}")
+                            f"更新异常: {self._safe_str(update_e)[:100]}, 变更字段{len(changed_fields)}个, 新增字段{len(new_fields)}个, 获取到的x5 cookies: {x5sec_cookies_str}")
 
                         # 发送更新失败通知
                         await self.send_token_refresh_notification(
                             f"滑块验证成功但数据库更新失败: {self._safe_str(update_e)}",
                             "captcha_success_db_update_failed"
                         )
+
+                        return None
 
                     return cookies_str
                 else:
@@ -5262,55 +5315,18 @@ class XianyuLive:
 
             # 合并cookies：保留原有cookies，只更新新获取到的字段
             try:
-                # 获取当前的cookies字典
-                current_cookies_dict = trans_cookies(self.cookies_str)
-                logger.info(f"【{self.cookie_id}】当前cookies包含 {len(current_cookies_dict)} 个字段")
+                _, merged_cookies_dict, updated_fields, changed_fields, new_fields = self._merge_cookie_dicts(new_cookies_dict)
 
-                # 合并cookies：新cookies覆盖旧cookies中的相同字段
-                merged_cookies_dict = current_cookies_dict.copy()
-                updated_fields = []
-
-                for key, value in new_cookies_dict.items():
-                    if key in merged_cookies_dict:
-                        if merged_cookies_dict[key] != value:
-                            merged_cookies_dict[key] = value
-                            updated_fields.append(key)
-                    else:
-                        merged_cookies_dict[key] = value
-                        updated_fields.append(f"{key}(新增)")
-
-                if updated_fields:
-                    logger.info(f"【{self.cookie_id}】更新的cookie字段: {', '.join(updated_fields)}")
-                else:
-                    logger.info(f"【{self.cookie_id}】没有cookie字段需要更新")
-
-                # 重新组装cookies字符串
-                merged_cookies_str = '; '.join([f"{k}={v}" for k, v in merged_cookies_dict.items()])
-                logger.info(f"【{self.cookie_id}】合并后cookies包含 {len(merged_cookies_dict)} 个字段")
-                
-                # 打印合并后的Cookie字段详情
-                logger.info(f"【{self.cookie_id}】========== 合并后Cookie字段详情 ==========")
-                logger.info(f"【{self.cookie_id}】Cookie字段数: {len(merged_cookies_dict)}")
-                logger.info(f"【{self.cookie_id}】Cookie字段列表:")
-                for i, (key, value) in enumerate(merged_cookies_dict.items(), 1):
-                    if len(str(value)) > 50:
-                        logger.info(f"【{self.cookie_id}】  {i:2d}. {key}: {str(value)[:30]}...{str(value)[-20:]} (长度: {len(str(value))})")
-                    else:
-                        logger.info(f"【{self.cookie_id}】  {i:2d}. {key}: {value}")
-                
-                # 检查关键字段
-                important_keys = ['unb', '_m_h5_tk', '_m_h5_tk_enc', 'cookie2', 't', 'sgcookie', 'cna']
-                logger.info(f"【{self.cookie_id}】关键字段检查:")
-                for key in important_keys:
-                    if key in merged_cookies_dict:
-                        val = merged_cookies_dict[key]
-                        logger.info(f"【{self.cookie_id}】  ✅ {key}: {'存在' if val else '为空'} (长度: {len(str(val)) if val else 0})")
-                    else:
-                        logger.info(f"【{self.cookie_id}】  ❌ {key}: 缺失")
-                logger.info(f"【{self.cookie_id}】==========================================")
+                self._log_cookie_merge_summary(
+                    merged_cookies_dict,
+                    updated_fields,
+                    changed_fields,
+                    new_fields,
+                    context="密码登录刷新Cookie"
+                )
 
                 # 使用合并后的cookies字符串
-                new_cookies_str = merged_cookies_str
+                new_cookies_str = '; '.join([f"{k}={v}" for k, v in merged_cookies_dict.items()])
                 new_cookies_dict = merged_cookies_dict
 
             except Exception as merge_e:
@@ -5406,6 +5422,7 @@ class XianyuLive:
         trigger_reason: str = "令牌/Session过期",
         risk_session_id: Optional[str] = None,
         trigger_scene: Optional[str] = None,
+        ignore_slider_failed_backoff: bool = False,
     ):
         """尝试通过密码登录刷新Cookie并重启实例
         
@@ -5460,24 +5477,32 @@ class XianyuLive:
         if failure_backoff:
             remaining_time = failure_backoff.get('until', 0) - current_time
             if remaining_time > 0:
-                logger.warning(
-                    f"【{self.cookie_id}】密码登录失败退避中（原因: {failure_backoff.get('reason', 'unknown')}），还需等待 {remaining_time:.1f} 秒"
-                )
-                if refresh_risk_log_id:
-                    self._update_risk_log(
-                        refresh_risk_log_id,
-                        session_id=risk_session_id,
-                        trigger_scene=trigger_scene,
-                        result_code='password_login_backoff',
-                        processing_status='failed',
-                        error_message=f"密码登录失败退避中，剩余{remaining_time:.1f}秒",
-                        duration_ms=max(0, int((time.time() - risk_log_started_at) * 1000)),
-                        event_meta=self._build_risk_event_meta(
-                            trigger_scene=trigger_scene,
-                            extra={**base_event_meta, 'backoff_reason': failure_backoff.get('reason'), 'backoff_seconds': failure_backoff.get('seconds')},
-                        ),
+                backoff_reason = failure_backoff.get('reason', 'unknown')
+                if ignore_slider_failed_backoff and backoff_reason == 'slider_failed':
+                    logger.warning(
+                        f"【{self.cookie_id}】检测到最近刚通过滑块，忽略旧的 slider_failed 退避并继续尝试密码登录刷新"
                     )
-                return False
+                    XianyuLive.clear_password_login_failure_backoff(self.cookie_id)
+                    failure_backoff = None
+                else:
+                    logger.warning(
+                        f"【{self.cookie_id}】密码登录失败退避中（原因: {backoff_reason}），还需等待 {remaining_time:.1f} 秒"
+                    )
+                    if refresh_risk_log_id:
+                        self._update_risk_log(
+                            refresh_risk_log_id,
+                            session_id=risk_session_id,
+                            trigger_scene=trigger_scene,
+                            result_code='password_login_backoff',
+                            processing_status='failed',
+                            error_message=f"密码登录失败退避中，剩余{remaining_time:.1f}秒",
+                            duration_ms=max(0, int((time.time() - risk_log_started_at) * 1000)),
+                            event_meta=self._build_risk_event_meta(
+                                trigger_scene=trigger_scene,
+                                extra={**base_event_meta, 'backoff_reason': backoff_reason, 'backoff_seconds': failure_backoff.get('seconds')},
+                            ),
+                        )
+                    return False
 
         last_password_login = XianyuLive._last_password_login_time.get(self.cookie_id, 0)
         time_since_last_login = current_time - last_password_login
@@ -13248,7 +13273,10 @@ class XianyuLive:
                         
                         try:
                             # 调用统一的密码登录刷新方法
-                            refresh_success = await self._try_password_login_refresh(f"连续失败{self.max_connection_failures}次")
+                            refresh_success = await self._try_password_login_refresh(
+                                f"连续失败{self.max_connection_failures}次",
+                                ignore_slider_failed_backoff=self._has_recent_slider_success(),
+                            )
                             
                             if refresh_success:
                                 logger.info(f"【{self.cookie_id}】✅ 密码登录刷新成功，将重置失败计数并继续重连")
