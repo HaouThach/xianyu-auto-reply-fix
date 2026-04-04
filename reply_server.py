@@ -2722,6 +2722,7 @@ async def _execute_password_login(session_id: str, account_id: str, account: str
         import threading
 
         def run_login():
+            import asyncio  # 在函数开头导入，避免后续局部import导致UnboundLocalError
             from db_manager import db_manager  # 在函数开头导入，避免作用域问题
             from XianyuAutoAsync import XianyuLive
             try:

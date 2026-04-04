@@ -1343,6 +1343,7 @@ class XianyuLive:
         self.last_token_refresh_time = 0
         self.current_token = None
         self.token_refresh_task = None
+        self.last_token_refresh_status = None  # Token刷新状态追踪
         self.connection_restart_flag = False  # 连接重启标志
         self.last_init_failure_reason = None
         self.last_init_failure_type = None

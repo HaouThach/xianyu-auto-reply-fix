@@ -15859,7 +15859,7 @@ function exportSearchResults() {
 
 
 // 默认版本号（当无法读取 version.txt 时使用）
-const DEFAULT_VERSION = 'v1.8.1';
+const DEFAULT_VERSION = 'v1.8.2';
 
 // 当前本地版本号（动态从 version.txt 读取）
 let LOCAL_VERSION = DEFAULT_VERSION;
@@ -15970,9 +15970,17 @@ function clearIgnoredUpdateVersion(showFeedback = true) {
 
 // 本地版本历史（远程服务禁用时使用）
 const LOCAL_VERSION_HISTORY = {
-    version: 'v1.8.1',
+    version: 'v1.8.2',
     intro: '本系统仅供个人学习研究使用，请勿用于商业用途。如有问题或建议，欢迎反馈。',
     versionHistory: [
+        {
+            version: 'v1.8.2',
+            date: '2026-04-04',
+            updates: [
+                '【修复】修复 Token 刷新循环因 last_token_refresh_status 属性未初始化导致崩溃的问题',
+                '【修复】修复手动刷新认证预检因 asyncio 局部变量遮蔽导致 UnboundLocalError 的问题'
+            ]
+        },
         {
             version: 'v1.8.1',
             date: '2026-04-03',
