@@ -17426,7 +17426,7 @@ function exportSearchResults() {
 
 
 // 默认版本号（当无法读取 version.txt 时使用）
-const DEFAULT_VERSION = 'v1.8.2';
+const DEFAULT_VERSION = 'v1.9.0';
 
 // 当前本地版本号（动态从 version.txt 读取）
 let LOCAL_VERSION = DEFAULT_VERSION;
@@ -17537,9 +17537,22 @@ function clearIgnoredUpdateVersion(showFeedback = true) {
 
 // 本地版本历史（远程服务禁用时使用）
 const LOCAL_VERSION_HISTORY = {
-    version: 'v1.8.4',
+    version: 'v1.9.0',
     intro: '本系统仅供个人学习研究使用，请勿用于商业用途。如有问题或建议，欢迎反馈。',
     versionHistory: [
+        {
+            version: 'v1.9.0',
+            date: '2026-04-08',
+            updates: [
+                '【新功能】升级账号保活链路与账号诊断能力，账号页按实际链路展示 WS / Session / Token / 轻保活 等运行状态，仪表盘账号卡片新增运行态摘要',
+                '【新功能】重写历史订单同步并切换卖家工作台接口，补齐订单平台时间字段链路，支持在前端查看同步入口、状态面板与任务进度',
+                '【修复】收紧历史订单同步时间范围与数量限制，降低大范围同步导致的异常与超时风险',
+                '【修复】收紧登录表单识别，找不到账号框/密码框时先复检已登录态和验证页；验证类型不明时不再默认按人脸处理，前后端展示与通知统一按实际验证类型显示',
+                '【修复】修复账号重新启用后资料被清空的问题，避免恢复启用时覆盖已有配置',
+                '【优化】调整自动回复优先级顺序，减少多规则命中时的回复偏差',
+                '【新功能】接入 GitHub 公告栏，仪表盘支持展示公告横幅并可点击查看历史公告记录'
+            ]
+        },
         {
             version: 'v1.8.4',
             date: '2026-04-05',
